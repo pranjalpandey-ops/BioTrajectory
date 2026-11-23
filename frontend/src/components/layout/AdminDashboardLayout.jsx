@@ -1,0 +1,378 @@
+
+import React, { useState } from 'react';
+import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
+import {
+  Shield,
+  Users,
+  BookOpen,
+  FileCheck,
+  AlertCircle,
+  BarChart3,
+  MessageSquare,
+  Cpu,
+  Lock,
+  ChevronLeft,
+  ChevronRight,
+  Menu,
+  X,
+  LogOut,
+  ShieldAlert,
+  FolderHeart,
+  FileText,
+  Key,
+  UserPlus,
+  CheckCircle2
+} from 'lucide-react';
+
+import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
+import ThemeToggle from '../common/ThemeToggle';
+import LanguageSwitcher from '../common/LanguageSwitcher';
+import BrandLogo from '../common/BrandLogo';
+import AdminHeartSplashScreen from '../admin/AdminHeartSplashScreen';
+import AddAdminModal from '../admin/AddAdminModal';
+import App3DBackground from '../common/App3DBackground';
+
+export default function AdminDashboardLayout() {
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [showSplashScreen, setShowSplashScreen] = useState(() => {
+    return sessionStorage.getItem('biotrajectory_admin_splash') === 'true';
+  });
+  const [isAddAdminModalOpen, setIsAddAdminModalOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState(null);
+
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const { currentUser, logout } = useAuth();
+  const { t, isHindi } = useLanguage();
+
+  // Get the authenticated admin's actual name
+  const adminName = currentUser?.name || 'Administrator';
+  const adminInitial = adminName.trim().charAt(0).toUpperCase() || 'A';
+
+  // Primary administrative items for desktop sidebar
+  const adminNavItems = [
+    { label: t('admin.overview', {}, 'Overview'), path: '/admin/dashboard', icon: Shield },
+    { label: t('admin.userAccounts', {}, 'User Accounts'), path: '/admin/users', icon: Users },
+    { label: t('admin.doctorVerification', {}, 'Doctor Verification'), path: '/admin/verification', icon: Shield },
+    { label: t('admin.patientManagement', {}, 'Patient Management'), path: '/admin/patients', icon: Users },
+    { label: isHindi ? 'मरीज मेडिकल रिकॉर्ड्स' : 'Medical Records', path: '/admin/medical-records', icon: FolderHeart },
+    { label: t('admin.userReports', {}, 'User Reports'), path: '/admin/reports', icon: AlertCircle },
+    { label: t('admin.systemStats', {}, 'System Stats'), path: '/admin/analytics', icon: BarChart3 },
+    { label: t('admin.userFeedback', {}, 'User Feedback'), path: '/admin/feedback', icon: MessageSquare }
+  ];
+
+  // Top panel action items
+  const topBarNavItems = [
+    { label: t('admin.diseaseGuide', {}, 'Disease Guide'), path: '/admin/diseases', icon: BookOpen },
+    { label: t('admin.articlesGuides', {}, 'Articles & Guides'), path: '/admin/content', icon: FileCheck },
+    { label: t('admin.securitySettings', {}, 'Security Settings'), path: '/admin/settings', icon: Lock }
+  ];
+
+  const allMobileNavItems = [...adminNavItems, ...topBarNavItems];
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  const isActive = (path) => {
+    if (path === '/admin/dashboard') {
+      return location.pathname === '/admin/dashboard';
+    }
+
+    if (path === '/admin/medical-records') {
+      return (
+        location.pathname.startsWith('/admin/medical-records') ||
+        location.pathname.startsWith('/admin/records') ||
+        location.pathname.startsWith('/doctor/medical-records')
+      );
+    }
+
+    return location.pathname.startsWith(path);
+  };
+
+  return (
+    <div className="flex h-screen w-full bg-[#F6F0E4] dark:bg-[#1F150E] text-slate-900 dark:text-slate-100 overflow-hidden font-sans">
+
+      {/* 1. ADMIN SIDEBAR */}
+      <aside
+        className={`hidden md:flex flex-col border-r border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-[#251A11] transition-all duration-300 z-30 shrink-0 ${
+          collapsed ? 'w-20' : 'w-72'
+        }`}
+      >
+        {/* Admin Header */}
+        <div className="flex items-center justify-between h-20 px-5 border-b border-slate-200 dark:border-slate-800">
+          {!collapsed ? (
+            <BrandLogo
+              to="/admin/dashboard"
+              icon={Shield}
+              subtitle="Admin Panel"
+              size="md"
+            />
+          ) : (
+            <div className="w-full flex justify-center">
+              <BrandLogo
+                to="/admin/dashboard"
+                icon={Shield}
+                size="sm"
+                showText={false}
+              />
+            </div>
+          )}
+
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="p-2 rounded-xl text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          >
+            {collapsed ? (
+              <ChevronRight className="w-5 h-5" />
+            ) : (
+              <ChevronLeft className="w-5 h-5" />
+            )}
+          </button>
+        </div>
+
+        {/* Navigation Items */}
+        <nav className="flex-1 py-5 px-3 space-y-1.5 overflow-y-auto">
+          {adminNavItems.map(item => {
+            const Icon = item.icon;
+            const active = isActive(item.path);
+
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                title={collapsed ? item.label : undefined}
+                className={`flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[16px] font-semibold transition-all ${
+                  active
+                    ? 'bg-purple-500/15 border border-purple-500/30 text-purple-700 dark:text-purple-300 shadow-sm font-bold'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Icon
+                  className={`w-5 h-5 shrink-0 ${
+                    active
+                      ? 'text-purple-600 dark:text-purple-400'
+                      : 'text-slate-400'
+                  }`}
+                />
+                {!collapsed && <span>{item.label}</span>}
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* Admin Safety Audit Tag Bottom */}
+        <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
+          {!collapsed ? (
+            <div className="p-3.5 rounded-2xl bg-slate-100 dark:bg-[#1F150E] border border-purple-500/20 text-[14px] text-slate-600 dark:text-slate-400 space-y-1">
+              <div className="flex items-center gap-2 font-bold text-purple-700 dark:text-purple-300">
+                <Lock className="w-4 h-4 text-purple-500 dark:text-purple-400" />
+                <span>
+                  {t('admin.privateRecordsTag', {}, 'Private Health Records')}
+                </span>
+              </div>
+
+              <p className="text-slate-500 dark:text-slate-400 leading-snug">
+                {t(
+                  'admin.privateRecordsDesc',
+                  {},
+                  'Administrators cannot view private patient medical readings.'
+                )}
+              </p>
+            </div>
+          ) : (
+            <div
+              className="flex justify-center p-2 text-purple-400"
+              title={t('admin.privateRecordsTag', {}, 'Private Health Records')}
+            >
+              <Lock className="w-5 h-5" />
+            </div>
+          )}
+
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-2xl text-[16px] font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" />
+            {!collapsed && (
+              <span>{t('admin.signOut', {}, 'Sign Out')}</span>
+            )}
+          </button>
+        </div>
+      </aside>
+
+      {/* 2. ADMIN MAIN VIEWPORT */}
+      <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden relative">
+        
+        {/* 3D Atmospheric Background */}
+        <App3DBackground />
+        
+
+        {/* Admin Header */}
+        <header className="h-20 px-6 sm:px-8 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-[#251A11]/80 backdrop-blur-xl flex items-center justify-between shrink-0 z-20">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setMobileOpen(!mobileOpen)}
+              className="md:hidden p-2 rounded-xl text-slate-400 hover:text-slate-900 dark:hover:text-white"
+            >
+              {mobileOpen ? (
+                <X className="w-6 h-6" />
+              ) : (
+                <Menu className="w-6 h-6" />
+              )}
+            </button>
+
+            <div className="flex items-center gap-3">
+              <span className="text-[17px] font-bold text-slate-900 dark:text-white">
+                {t('admin.adminManagement', {}, 'Admin Management')}
+              </span>
+
+              <span className="text-xs font-semibold bg-purple-500/15 text-purple-700 dark:text-purple-300 px-3 py-1 rounded-full">
+                {t('admin.systemAdminBadge', {}, 'System Admin')}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 sm:gap-3">
+
+            {/* Disease Guide Button */}
+            <Link
+              to="/admin/diseases"
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap ${
+                isActive('/admin/diseases')
+                  ? 'bg-purple-500/20 text-purple-700 dark:text-purple-300 shadow-xs'
+                  : 'bg-slate-100/90 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
+              }`}
+              title={isHindi ? 'रोग गाइड' : 'Disease Guide'}
+            >
+              <BookOpen className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+              <span className="hidden sm:inline">
+                {isHindi ? 'रोग गाइड' : 'Disease Guide'}
+              </span>
+            </Link>
+
+            {/* Articles & Content Button */}
+            <Link
+              to="/admin/content"
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap ${
+                isActive('/admin/content')
+                  ? 'bg-purple-500/20 text-purple-700 dark:text-purple-300 shadow-xs'
+                  : 'bg-slate-100/90 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
+              }`}
+              title={isHindi ? 'लेख एवं सामग्री' : 'Articles & Content'}
+            >
+              <FileCheck className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+              <span className="hidden md:inline">
+                {isHindi ? 'लेख एवं सामग्री' : 'Articles & Content'}
+              </span>
+            </Link>
+
+            {/* Security Settings Button */}
+            <Link
+              to="/admin/settings"
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap ${
+                isActive('/admin/settings')
+                  ? 'bg-purple-500/20 text-purple-700 dark:text-purple-300 shadow-xs'
+                  : 'bg-slate-100/90 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
+              }`}
+              title={isHindi ? 'सुरक्षा सेटिंग्स' : 'Security Settings'}
+            >
+              <Lock className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+              <span className="hidden lg:inline">
+                {isHindi ? 'सुरक्षा सेटिंग्स' : 'Security Settings'}
+              </span>
+            </Link>
+
+
+            {/* 5. ADD ADMIN BUTTON (BORDERLESS) */}
+            <button
+              onClick={() => setIsAddAdminModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap bg-purple-600 hover:bg-purple-500 text-white shadow-xs"
+              title={isHindi ? 'नया व्यवस्थापक जोड़ें' : 'Add New Administrator'}
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>{isHindi ? '+ व्यवस्थापक' : '+ Add Admin'}</span>
+            </button>
+
+            <LanguageSwitcher compact />
+            <ThemeToggle />
+
+            {/* Authenticated Admin Profile */}
+            <div className="flex items-center gap-3 pl-4 border-l border-slate-200 dark:border-slate-800">
+              <div className="w-10 h-10 rounded-2xl bg-purple-500/20 text-purple-600 dark:text-purple-300 font-bold flex items-center justify-center text-sm">
+                {adminInitial}
+              </div>
+
+              <span className="text-[16px] font-bold text-slate-800 dark:text-slate-200 hidden sm:inline">
+                {adminName}
+              </span>
+            </div>
+          </div>
+        </header>
+
+        {/* Toast Notification */}
+        {toastMessage && (
+          <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-5 py-3 rounded-2xl bg-purple-600 text-white font-bold text-sm shadow-2xl animate-fade-in">
+            <CheckCircle2 className="w-5 h-5" />
+            <span>{toastMessage}</span>
+          </div>
+        )}
+
+        {/* 3D Holographic Heart Splash Screen */}
+        {showSplashScreen && (
+          <AdminHeartSplashScreen
+            onComplete={() => {
+              setShowSplashScreen(false);
+              sessionStorage.removeItem('biotrajectory_admin_splash');
+            }}
+          />
+        )}
+
+        {/* Add Administrator Modal */}
+        <AddAdminModal
+          isOpen={isAddAdminModalOpen}
+          onClose={() => setIsAddAdminModalOpen(false)}
+          onAdminAdded={(newAdmin, message) => {
+            setToastMessage(message || 'Administrator successfully registered.');
+            setTimeout(() => setToastMessage(null), 3500);
+          }}
+        />
+
+        {/* Mobile Drawer */}
+        {mobileOpen && (
+          <div className="md:hidden border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#251A11] p-5 space-y-2 z-30 shrink-0">
+            {allMobileNavItems.map(item => {
+              const Icon = item.icon;
+              const active = isActive(item.path);
+
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setMobileOpen(false)}
+                  className={`flex items-center gap-3.5 px-4 py-3 rounded-2xl text-[16px] font-semibold ${
+                    active
+                      ? 'bg-purple-500/20 text-purple-700 dark:text-purple-300 font-bold'
+                      : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  <Icon className="w-5 h-5" />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Content Outlet */}
+        <main className="flex-1 overflow-y-auto p-6 sm:p-8 lg:p-10 relative z-10">
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+}
