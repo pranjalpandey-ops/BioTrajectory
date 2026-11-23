@@ -1,0 +1,843 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================
+    // 1. GENERAL HELPERS
+    // ============================================================
+
+    function isAuthenticated() {
+      return request.auth != null &&
+        request.auth.uid != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() &&
+        request.auth.uid == userId;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data
+        .diff(resource.data)
+        .affectedKeys()
+        .hasAny(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+        email.size() <= 150 &&
+        email.matches(
+          "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+        );
+    }
+
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+        (
+          request.resource.data[field] is string &&
+          request.resource.data[field].size() >= minLen &&
+          request.resource.data[field].size() <= maxLen
+        );
+    }
+
+    function isValidOptionalNumber(field, minVal, maxVal) {
+      return !(field in request.resource.data) ||
+        (
+          request.resource.data[field] is number &&
+          request.resource.data[field] >= minVal &&
+          request.resource.data[field] <= maxVal
+        );
+    }
+
+    function isValidOptionalBool(field) {
+      return !(field in request.resource.data) ||
+        request.resource.data[field] is bool;
+    }
+
+    function isValidOptionalTimestamp(field) {
+      return !(field in request.resource.data) ||
+        request.resource.data[field] is timestamp;
+    }
+
+    // Accept Timestamp for new records and strings for legacy records.
+    function isValidOptionalDate(field) {
+      return !(field in request.resource.data) ||
+        request.resource.data[field] is timestamp ||
+        (
+          request.resource.data[field] is string &&
+          request.resource.data[field].size() >= 1 &&
+          request.resource.data[field].size() <= 100
+        );
+    }
+
+    function uidNotModified() {
+      return !('uid' in request.resource.data) ||
+        request.resource.data.uid == resource.data.uid;
+    }
+
+    // ============================================================
+    // 2. DOCTOR AND PATIENT AUTHORIZATION HELPERS
+    // ============================================================
+
+    function isApprovedDoctor(doctorUid) {
+      return isAuthenticated() &&
+        exists(
+          /databases/$(database)/documents/approved_doctors/$(doctorUid)
+        );
+    }
+
+    function isExistingPatient(patientUid) {
+      return exists(
+          /databases/$(database)/documents/users/$(patientUid)
+        ) ||
+        exists(
+          /databases/$(database)/documents/patients/$(patientUid)
+        ) ||
+        exists(
+          /databases/$(database)/documents/patient_records/$(patientUid)
+        );
+    }
+
+    function isActiveFamilyMember(familyId) {
+      return isAuthenticated() &&
+        exists(
+          /databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid)
+        ) &&
+        get(
+          /databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid)
+        ).data.status == 'ACTIVE';
+    }
+
+    function isAuthorizedFamilyViewer(patientUid) {
+      return isAuthenticated() &&
+        'familyId' in request.auth.token &&
+        request.auth.token.familyId is string &&
+        isActiveFamilyMember(request.auth.token.familyId) &&
+        exists(
+          /databases/$(database)/documents/families/$(request.auth.token.familyId)/members/$(patientUid)
+        ) &&
+        get(
+          /databases/$(database)/documents/families/$(request.auth.token.familyId)/members/$(patientUid)
+        ).data.status == 'ACTIVE' &&
+        get(
+          /databases/$(database)/documents/families/$(request.auth.token.familyId)/members/$(patientUid)
+        ).data.permissions.viewReadings == true;
+    }
+
+    // ============================================================
+    // 3. USER VALIDATION
+    // ============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasOnly([
+        'uid',
+        'name',
+        'fullName',
+        'email',
+        'photoURL',
+        'createdAt',
+        'updatedAt',
+        'onboardingCompleted'
+      ]) &&
+      data.uid is string &&
+      data.uid.size() >= 1 &&
+      data.uid.size() <= 128 &&
+      isValidOptionalString('name', 1, 100) &&
+      isValidOptionalString('fullName', 1, 100) &&
+      (!('email' in data) || isValidEmail(data.email)) &&
+      (
+        !('photoURL' in data) ||
+        data.photoURL == null ||
+        (
+          data.photoURL is string &&
+          data.photoURL.size() <= 500
+        )
+      ) &&
+      isValidOptionalTimestamp('createdAt') &&
+      isValidOptionalTimestamp('updatedAt') &&
+      isValidOptionalBool('onboardingCompleted');
+    }
+
+    // ============================================================
+    // 4. PATIENT PROFILE VALIDATION
+    // ============================================================
+
+    function isValidPatientProfile(data) {
+      return data.keys().hasOnly([
+        'uid',
+        'name',
+        'age',
+        'gender',
+        'bloodGroup',
+        'height',
+        'weight',
+        'allergies',
+        'conditions',
+        'emergencyContact',
+        'consent',
+        'onboardingCompleted',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.uid is string &&
+      data.uid.size() >= 1 &&
+      data.uid.size() <= 128 &&
+      isValidOptionalString('name', 1, 100) &&
+      isValidOptionalNumber('age', 0, 150) &&
+      isValidOptionalString('gender', 1, 30) &&
+      isValidOptionalString('bloodGroup', 1, 10) &&
+      isValidOptionalNumber('height', 0, 300) &&
+      isValidOptionalNumber('weight', 0, 500) &&
+      (
+        !('allergies' in data) ||
+        (
+          data.allergies is list &&
+          data.allergies.size() <= 50
+        )
+      ) &&
+      (
+        !('conditions' in data) ||
+        (
+          data.conditions is list &&
+          data.conditions.size() <= 50
+        )
+      ) &&
+      (
+        !('emergencyContact' in data) ||
+        (
+          data.emergencyContact is map &&
+          data.emergencyContact.keys().size() <= 10
+        )
+      ) &&
+      (
+        !('consent' in data) ||
+        (
+          data.consent is map &&
+          data.consent.keys().size() <= 10
+        )
+      ) &&
+      isValidOptionalBool('onboardingCompleted') &&
+      isValidOptionalTimestamp('createdAt') &&
+      isValidOptionalTimestamp('updatedAt');
+    }
+
+    // ============================================================
+    // 5. HEALTH READING VALIDATION
+    // ============================================================
+
+    function isValidHealthReading(data) {
+      return data.keys().hasAll(['type', 'values']) &&
+      data.keys().hasOnly([
+        'id',
+        'type',
+        'values',
+        'source',
+        'measuredAt',
+        'createdAt',
+        'updatedAt',
+        'notes',
+        'isCustom',
+        'findings',
+        'doctorName',
+        'facility',
+        'status',
+        'category',
+        'title'
+      ]) &&
+      data.type is string &&
+      data.type in [
+        'blood_pressure',
+        'heart_rate',
+        'oxygen_saturation',
+        'activity',
+        'urine_test',
+        'blood_test',
+        'imaging_scan',
+        'prescription',
+        'clinical_note',
+        'document'
+      ] &&
+      data.values is map &&
+      data.values.keys().size() > 0 &&
+      data.values.keys().size() <= 50 &&
+      isValidOptionalString('id', 1, 128) &&
+      isValidOptionalString('source', 1, 50) &&
+      isValidOptionalDate('measuredAt') &&
+      isValidOptionalString('notes', 0, 1000) &&
+      isValidOptionalBool('isCustom') &&
+      (
+        !('findings' in data) ||
+        (
+          data.findings is list &&
+          data.findings.size() <= 50
+        )
+      ) &&
+      isValidOptionalString('doctorName', 1, 150) &&
+      isValidOptionalString('facility', 1, 150) &&
+      isValidOptionalString('status', 1, 50) &&
+      isValidOptionalString('category', 1, 150) &&
+      isValidOptionalString('title', 1, 200) &&
+      isValidOptionalTimestamp('createdAt') &&
+      isValidOptionalTimestamp('updatedAt');
+    }
+
+    // ============================================================
+    // 6. FAMILY VALIDATION
+    // ============================================================
+
+    function isValidFamily(data) {
+      return data.keys().hasAll([
+        'name',
+        'ownerUid',
+        'status'
+      ]) &&
+      data.keys().hasOnly([
+        'name',
+        'ownerUid',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.name is string &&
+      data.name.size() >= 1 &&
+      data.name.size() <= 100 &&
+      data.ownerUid is string &&
+      data.ownerUid.size() >= 1 &&
+      data.ownerUid.size() <= 128 &&
+      data.status in [
+        'ACTIVE',
+        'INACTIVE',
+        'DISBANDED'
+      ] &&
+      isValidOptionalTimestamp('createdAt') &&
+      isValidOptionalTimestamp('updatedAt');
+    }
+
+    function isValidPermissionsMap(permissions) {
+      return permissions is map &&
+        permissions.keys().hasOnly([
+          'viewReadings',
+          'viewAnalytics',
+          'viewMedicalHistory',
+          'viewReports'
+        ]) &&
+        (
+          !('viewReadings' in permissions) ||
+          permissions.viewReadings is bool
+        ) &&
+        (
+          !('viewAnalytics' in permissions) ||
+          permissions.viewAnalytics is bool
+        ) &&
+        (
+          !('viewMedicalHistory' in permissions) ||
+          permissions.viewMedicalHistory is bool
+        ) &&
+        (
+          !('viewReports' in permissions) ||
+          permissions.viewReports is bool
+        );
+    }
+
+    function isValidFamilyMember(data) {
+      return data.keys().hasAll([
+        'uid',
+        'familyRole',
+        'status',
+        'permissions'
+      ]) &&
+      data.keys().hasOnly([
+        'uid',
+        'name',
+        'email',
+        'familyRole',
+        'status',
+        'permissions',
+        'joinedAt',
+        'updatedAt',
+        'leftAt',
+        'removedAt'
+      ]) &&
+      data.uid is string &&
+      data.uid.size() >= 1 &&
+      data.uid.size() <= 128 &&
+      isValidOptionalString('name', 1, 100) &&
+      (!('email' in data) || isValidEmail(data.email)) &&
+      data.familyRole in [
+        'OWNER',
+        'MEMBER',
+        'ADMIN'
+      ] &&
+      data.status in [
+        'ACTIVE',
+        'INACTIVE'
+      ] &&
+      isValidPermissionsMap(data.permissions) &&
+      isValidOptionalTimestamp('joinedAt') &&
+      isValidOptionalTimestamp('updatedAt') &&
+      isValidOptionalTimestamp('leftAt') &&
+      isValidOptionalTimestamp('removedAt');
+    }
+
+    // ============================================================
+    // 7. CHAT HISTORY VALIDATION
+    // ============================================================
+
+    function isValidChatHistory(data) {
+      return data.keys().hasAll(['userId']) &&
+      data.keys().hasOnly([
+        'conversationId',
+        'userId',
+        'messages',
+        'created_at',
+        'updated_at',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.userId is string &&
+      data.userId.size() >= 1 &&
+      data.userId.size() <= 128 &&
+      isValidOptionalString('conversationId', 1, 128) &&
+      (
+        !('messages' in data) ||
+        (
+          data.messages is list &&
+          data.messages.size() <= 500
+        )
+      );
+    }
+
+    // ============================================================
+    // 8. DOCTOR PROFILE VALIDATION
+    // ============================================================
+
+    function isValidDoctorProfile(data) {
+      return data.keys().hasOnly([
+        'uid',
+        'name',
+        'fullName',
+        'specialization',
+        'specialty',
+        'qualification',
+        'clinicName',
+        'bio',
+        'phone',
+        'email',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      isValidOptionalString('uid', 1, 128) &&
+      isValidOptionalString('name', 1, 100) &&
+      isValidOptionalString('fullName', 1, 100) &&
+      isValidOptionalString('specialization', 1, 100) &&
+      isValidOptionalString('specialty', 1, 100) &&
+      isValidOptionalString('qualification', 1, 100) &&
+      isValidOptionalString('clinicName', 1, 100) &&
+      isValidOptionalString('bio', 0, 1000) &&
+      isValidOptionalString('phone', 0, 30) &&
+      (!('email' in data) || isValidEmail(data.email)) &&
+      isValidOptionalTimestamp('createdAt') &&
+      isValidOptionalTimestamp('updatedAt');
+    }
+
+    // ============================================================
+    // 9. PATIENT DOCUMENT VALIDATION
+    // ============================================================
+
+    function isValidPatient(data) {
+      return data.keys().hasOnly([
+        'uid',
+        'fullName',
+        'email',
+        'profileStatus',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.uid is string &&
+      data.uid.size() >= 1 &&
+      data.uid.size() <= 128 &&
+      isValidOptionalString('fullName', 1, 100) &&
+      (!('email' in data) || isValidEmail(data.email)) &&
+      isValidOptionalString('profileStatus', 1, 30) &&
+      isValidOptionalTimestamp('createdAt') &&
+      isValidOptionalTimestamp('updatedAt');
+    }
+
+    // ============================================================
+    // 10. APPOINTMENT VALIDATION
+    // ============================================================
+
+    function isValidAppointment(data) {
+      return data.keys().hasAll([
+        'patientId',
+        'doctorId',
+        'status'
+      ]) &&
+      data.keys().hasOnly([
+        'id',
+        'patientId',
+        'patientName',
+        'doctorId',
+        'doctorName',
+        'appointmentDate',
+        'appointmentTime',
+        'type',
+        'reason',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.patientId is string &&
+      data.patientId.size() >= 1 &&
+      data.patientId.size() <= 128 &&
+      data.doctorId is string &&
+      data.doctorId.size() >= 1 &&
+      data.doctorId.size() <= 128 &&
+      data.status in [
+        'PENDING',
+        'ACCEPTED',
+        'REJECTED',
+        'CANCELLED',
+        'COMPLETED'
+      ] &&
+      isValidOptionalString('id', 1, 128) &&
+      isValidOptionalString('patientName', 1, 100) &&
+      isValidOptionalString('doctorName', 1, 100) &&
+      isValidOptionalString('appointmentDate', 1, 50) &&
+      isValidOptionalString('appointmentTime', 1, 50) &&
+      isValidOptionalString('type', 1, 50) &&
+      isValidOptionalString('reason', 0, 500) &&
+      isValidOptionalTimestamp('createdAt') &&
+      isValidOptionalTimestamp('updatedAt');
+    }
+
+    function isNewAppointmentPending() {
+      return request.resource.data.status == 'PENDING' &&
+        isValidAppointment(request.resource.data) &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.updatedAt == request.time;
+    }
+
+    function isPatientBooking() {
+      return isAuthenticated() &&
+        request.resource.data.patientId == request.auth.uid &&
+        isApprovedDoctor(request.resource.data.doctorId) &&
+        isNewAppointmentPending();
+    }
+
+    function isDoctorBooking() {
+      return isAuthenticated() &&
+        request.resource.data.doctorId == request.auth.uid &&
+        isApprovedDoctor(request.auth.uid) &&
+        isExistingPatient(request.resource.data.patientId) &&
+        isNewAppointmentPending();
+    }
+
+    function isDoctorAppointmentUpdate() {
+      return isAuthenticated() &&
+        resource.data.doctorId == request.auth.uid &&
+        isApprovedDoctor(request.auth.uid) &&
+        request.resource.data.patientId == resource.data.patientId &&
+        request.resource.data.doctorId == resource.data.doctorId &&
+        request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly(['status', 'updatedAt']) &&
+        request.resource.data.updatedAt == request.time &&
+        (
+          (
+            resource.data.status == 'PENDING' &&
+            request.resource.data.status in [
+              'ACCEPTED',
+              'REJECTED'
+            ]
+          ) ||
+          (
+            resource.data.status == 'ACCEPTED' &&
+            request.resource.data.status == 'COMPLETED'
+          )
+        );
+    }
+
+    function isPatientAppointmentCancellation() {
+      return isAuthenticated() &&
+        resource.data.patientId == request.auth.uid &&
+        request.resource.data.patientId == resource.data.patientId &&
+        request.resource.data.doctorId == resource.data.doctorId &&
+        request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly(['status', 'updatedAt']) &&
+        request.resource.data.updatedAt == request.time &&
+        resource.data.status in [
+          'PENDING',
+          'ACCEPTED'
+        ] &&
+        request.resource.data.status == 'CANCELLED';
+    }
+
+    // ============================================================
+    // 11. USERS COLLECTION
+    // ============================================================
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+
+      allow create: if isOwner(uid) &&
+        isValidUser(request.resource.data) &&
+        request.resource.data.uid == uid;
+
+      allow update: if isOwner(uid) &&
+        isValidUser(request.resource.data) &&
+        uidNotModified() &&
+        areImmutableFieldsUnchanged(['createdAt']);
+
+      allow delete: if false;
+
+      match /familyMemberships/{familyId} {
+        allow read: if isOwner(uid);
+
+        allow create, update, delete: if false;
+      }
+    }
+
+    // ============================================================
+    // 12. PATIENT RECORDS
+    // ============================================================
+
+    match /patient_records/{patientUid} {
+      allow read: if isOwner(patientUid);
+
+      allow create: if isOwner(patientUid) &&
+        isValidPatientProfile(request.resource.data) &&
+        request.resource.data.uid == patientUid;
+
+      allow update: if isOwner(patientUid) &&
+        isValidPatientProfile(request.resource.data) &&
+        uidNotModified() &&
+        areImmutableFieldsUnchanged(['createdAt']);
+
+      allow delete: if false;
+
+      match /readings/{readingId} {
+        allow read: if isOwner(patientUid) ||
+          isAuthorizedFamilyViewer(patientUid);
+
+        allow create: if isOwner(patientUid) &&
+          isValidHealthReading(request.resource.data);
+
+        allow update: if isOwner(patientUid) &&
+          isValidHealthReading(request.resource.data) &&
+          areImmutableFieldsUnchanged(['id', 'createdAt']);
+
+        allow delete: if isOwner(patientUid);
+      }
+    }
+
+    // ============================================================
+    // 13. FAMILIES
+    // ============================================================
+
+    match /families/{familyId} {
+      allow read: if isActiveFamilyMember(familyId);
+
+      allow create: if isAuthenticated() &&
+        request.resource.data.ownerUid == request.auth.uid &&
+        request.resource.data.status == 'ACTIVE' &&
+        isValidFamily(request.resource.data);
+
+      allow update: if isAuthenticated() &&
+        resource.data.ownerUid == request.auth.uid &&
+        isValidFamily(request.resource.data) &&
+        areImmutableFieldsUnchanged([
+          'ownerUid',
+          'createdAt'
+        ]);
+
+      allow delete: if false;
+
+      match /members/{memberUid} {
+        allow read: if isActiveFamilyMember(familyId);
+
+        allow create: if false;
+
+        allow update: if isAuthenticated() &&
+          isValidFamilyMember(request.resource.data) &&
+          areImmutableFieldsUnchanged([
+            'uid',
+            'joinedAt'
+          ]) &&
+          (
+            (
+              request.auth.uid == memberUid &&
+              request.resource.data.diff(resource.data)
+                .affectedKeys()
+                .hasOnly(['permissions', 'updatedAt']) &&
+              areImmutableFieldsUnchanged([
+                'familyRole',
+                'status'
+              ])
+            ) ||
+            (
+              get(
+                /databases/$(database)/documents/families/$(familyId)
+              ).data.ownerUid == request.auth.uid &&
+              request.resource.data.diff(resource.data)
+                .affectedKeys()
+                .hasOnly([
+                  'status',
+                  'updatedAt',
+                  'leftAt',
+                  'removedAt'
+                ])
+            )
+          );
+
+        allow delete: if false;
+      }
+    }
+
+    // ============================================================
+    // 14. FAMILY INVITATIONS
+    // ============================================================
+
+    match /family_invitations/{invitationId} {
+      allow write: if false;
+
+      allow read: if isAuthenticated() &&
+        (
+          request.auth.uid == resource.data.invitedBy ||
+          (
+            request.auth.token.email != null &&
+            request.auth.token.email_verified == true &&
+            request.auth.token.email == resource.data.invitedEmail
+          ) ||
+          (
+            exists(
+              /databases/$(database)/documents/families/$(resource.data.familyId)
+            ) &&
+            get(
+              /databases/$(database)/documents/families/$(resource.data.familyId)
+            ).data.ownerUid == request.auth.uid
+          )
+        );
+    }
+
+    // ============================================================
+    // 15. CHAT HISTORY
+    // ============================================================
+
+    match /chat_history/{conversationId} {
+      allow read: if isAuthenticated() &&
+        resource.data.userId == request.auth.uid;
+
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid &&
+        isValidChatHistory(request.resource.data);
+
+      allow update: if isAuthenticated() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == request.auth.uid &&
+        isValidChatHistory(request.resource.data) &&
+        areImmutableFieldsUnchanged([
+          'userId',
+          'created_at',
+          'createdAt'
+        ]);
+
+      allow delete: if isAuthenticated() &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================================
+    // 16. DOCTOR PROFILES
+    // ============================================================
+
+    match /doctor_profiles/{doctorId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated() &&
+        request.auth.uid == doctorId &&
+        isValidDoctorProfile(request.resource.data);
+
+      allow update: if isAuthenticated() &&
+        request.auth.uid == doctorId &&
+        isValidDoctorProfile(request.resource.data) &&
+        areImmutableFieldsUnchanged([
+          'uid',
+          'createdAt'
+        ]);
+
+      allow delete: if false;
+    }
+
+    // ============================================================
+    // 17. APPROVED DOCTORS
+    // ============================================================
+
+    match /approved_doctors/{doctorId} {
+      allow read: if isAuthenticated();
+
+      allow write: if false;
+    }
+
+    // ============================================================
+    // 18. APPOINTMENTS
+    // ============================================================
+
+    match /appointments/{appointmentId} {
+
+      allow read: if isAuthenticated() &&
+        (
+          resource.data.patientId == request.auth.uid ||
+          (
+            resource.data.doctorId == request.auth.uid &&
+            isApprovedDoctor(request.auth.uid)
+          )
+        );
+
+      allow create: if isPatientBooking() ||
+        isDoctorBooking();
+
+      allow update: if isDoctorAppointmentUpdate() ||
+        isPatientAppointmentCancellation();
+
+      allow delete: if false;
+    }
+
+    // ============================================================
+    // 19. PATIENTS COLLECTION
+    // ============================================================
+
+    match /patients/{patientUid} {
+      allow read: if isOwner(patientUid);
+
+      allow create: if isOwner(patientUid) &&
+        isValidPatient(request.resource.data) &&
+        request.resource.data.uid == patientUid;
+
+      allow update: if isOwner(patientUid) &&
+        isValidPatient(request.resource.data) &&
+        uidNotModified() &&
+        areImmutableFieldsUnchanged(['createdAt']);
+
+      allow delete: if false;
+    }
+
+    // ============================================================
+    // 20. DEFAULT DENY
+    // ============================================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
